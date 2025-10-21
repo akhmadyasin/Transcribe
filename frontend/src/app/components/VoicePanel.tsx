@@ -3,6 +3,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { supabase } from "../lib/supabaseClient";
 import { io, Socket } from "socket.io-client";
 import { diffWords } from "diff";
 import "@/app/styles/voice.css"; // Pastikan file CSS ini ada dan sesuai
@@ -414,7 +415,51 @@ export default function VoicePanel() {
                 e.currentTarget.style.background = '#f4f6fa';
                 e.currentTarget.style.border = '1px solid #d1d9e6';
               }}
-              onClick={() => alert('Dummy save!')}
+              onClick={async () => {
+                const el = summaryEditorRef.current;
+                const summaryText = (el?.textContent || "").trim();
+                const original = (fullTranscriptRef.current || "").trim();
+                if (!summaryText) {
+                  showToast("Ringkasan kosong — tidak ada yang disimpan.", "error");
+                  return;
+                }
+
+                // Check auth user
+                try {
+                  const { data } = await supabase.auth.getUser();
+                  const user = data?.user;
+                  if (!user) {
+                    showToast("Harap login untuk menyimpan ringkasan.", "error");
+                    return;
+                  }
+
+                  const payload = {
+                    user_id: user.id,
+                    original_text: original || summaryText,
+                    summary_result: summaryText,
+                    mode_used: currentModeRef.current || null,
+                    metadata: {
+                      saved_at: new Date().toISOString(),
+                      transcript_length: (original || "").length,
+                      summary_length: summaryText.length,
+                    },
+                  } as any;
+
+                  const { error } = await supabase.from("histories").insert([payload]);
+                  if (error) {
+                    console.warn("Supabase insert error:", error);
+                    showToast("Gagal menyimpan ringkasan ke database.", "error");
+                    return;
+                  }
+
+                  try { localStorage.setItem(LS_LAST_SUMMARY_KEY, summaryText); } catch {}
+                  showToast("Ringkasan tersimpan ke History", "success");
+                  setTimeout(() => { window.location.href = "/history"; }, 350);
+                } catch (err) {
+                  console.error("Save to Supabase error:", err);
+                  showToast("Gagal menyimpan — coba lagi.", "error");
+                }
+              }}
             >
               <svg width="18" height="18" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" style={{marginRight: 6}}>
                 <circle cx="10" cy="10" r="10" fill="#bee3f8"/>

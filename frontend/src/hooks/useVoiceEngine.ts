@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
+import { supabase } from "../app/lib/supabaseClient";
 import { io, Socket } from "socket.io-client";
 
 type ToastType = "success" | "error" | "info";
@@ -586,22 +587,37 @@ export function useVoiceEngine() {
     }
     setSaving(true);
     try {
-      const resp = await fetch(`${BACKEND_ORIGIN}/save`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
-      });
-      if (!resp.ok) {
-        const txt = await resp.text().catch(() => null);
-        console.warn("Server save failed:", resp.status, txt);
-        showToast("Gagal menyimpan ke server.", "error");
+      const { data } = await supabase.auth.getUser();
+      const user = data?.user;
+      if (!user) {
+        showToast("Harap login untuk menyimpan ringkasan.", "error");
         setSaving(false);
         return;
       }
+
+      const payload = {
+        user_id: user.id,
+        original_text: (fullTranscriptRef.current || text).trim() || text,
+        summary_result: text,
+        mode_used: currentModeRef.current || null,
+        metadata: {
+          saved_at: new Date().toISOString(),
+          transcript_length: (fullTranscriptRef.current || "").length,
+          summary_length: text.length,
+        },
+      } as any;
+
+      const { error } = await supabase.from("summaries").insert([payload]);
+      if (error) {
+        console.warn("Supabase insert error:", error);
+        showToast("Gagal menyimpan ringkasan ke database.", "error");
+        setSaving(false);
+        return;
+      }
+
+      try { localStorage.setItem(LS_LAST_SUMMARY_KEY, text); } catch {}
       showToast("Ringkasan tersimpan ke History", "success");
-      setTimeout(() => {
-        window.location.href = "/history";
-      }, 300);
+      setTimeout(() => { window.location.href = "/history"; }, 300);
     } catch (err) {
       console.error("Save request error:", err);
       showToast("Gagal koneksi ke server — coba lagi.", "error");

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { format } from 'date-fns';
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { supabaseBrowser } from "@/app/lib/supabaseClient";
@@ -21,26 +22,7 @@ type HistoryItem = {
   summary: string;
 };
 
-const SAMPLE: HistoryItem[] = [
-  {
-    id: "1",
-    date: "15 Januari 2025, 14:30",
-    duration: "2 menit 15 detik",
-    transcript:
-      'Halo, ini adalah contoh transkrip dari sesi voice to text. Sistem ini bekerja dengan baik untuk mengkonversi suara menjadi teks secara real-time. Kemudian AI akan meringkas konten ini menjadi format yang lebih mudah dibaca.',
-    summary:
-      "Sesi voice to text berhasil mengkonversi suara menjadi teks dengan baik. Sistem bekerja real-time dan AI merangkum konten menjadi format yang mudah dibaca.",
-  },
-  {
-    id: "2",
-    date: "15 Januari 2025, 10:15",
-    duration: "1 menit 45 detik",
-    transcript:
-      "Testing sistem voice recognition untuk memastikan semua fitur berfungsi dengan baik. Ini adalah uji coba kedua untuk memverifikasi kualitas transkripsi dan ringkasan AI.",
-    summary:
-      "Uji coba sistem voice recognition berhasil. Fitur transkripsi dan ringkasan AI berfungsi dengan baik.",
-  },
-];
+const SAMPLE: HistoryItem[] = [];
 
 export default function HistoryPage() {
   const router = useRouter();
@@ -67,7 +49,30 @@ export default function HistoryPage() {
       }
       setEmail(session.user.email || "");
       setMeta((session.user.user_metadata as UserMeta) || {});
-      setLoading(false);
+      // fetch user summaries from Supabase
+      try {
+        const { data, error } = await supabase
+          .from('histories')
+          .select('id, created_at, original_text, summary_result, mode_used, metadata')
+          .order('created_at', { ascending: false });
+
+        if (error) {
+          console.error('Error fetching summaries:', error);
+        } else if (data) {
+          const mapped: HistoryItem[] = data.map((d: any) => ({
+            id: d.id,
+            date: format(new Date(d.created_at), 'dd MMM yyyy, HH:mm'),
+            duration: (d.metadata && d.metadata.duration) || '',
+            transcript: d.original_text,
+            summary: d.summary_result,
+          }));
+          setItems(mapped);
+        }
+      } catch (err) {
+        console.error('Unexpected error fetching summaries', err);
+      } finally {
+        setLoading(false);
+      }
     })();
 
     const { data: sub } = supabase.auth.onAuthStateChange((_e, sess) => {
@@ -120,9 +125,19 @@ export default function HistoryPage() {
   };
 
   const handleDelete = (id: string) => {
-    if (confirm("Apakah Anda yakin ingin menghapus riwayat ini?")) {
-      setItems((prev) => prev.filter((x) => x.id !== id));
-    }
+    if (!confirm("Apakah Anda yakin ingin menghapus riwayat ini?")) return;
+
+    // optimistic UI update
+    const prev = items;
+    setItems((p) => p.filter((x) => x.id !== id));
+
+    (async () => {
+      const { error } = await supabase.from('').delete().eq('id', id);
+      if (error) {
+        alert('Gagal menghapus riwayat: ' + error.message);
+        setItems(prev); // rollback
+      }
+    })();
   };
 
   const onLogout = async () => {
