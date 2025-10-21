@@ -97,7 +97,18 @@ export function useVoiceEngine() {
 
   const summarizeInFlightRef = useRef<boolean>(false);
 
-  const currentModeRef = useRef<string>("patologi");
+  // Prefer per-user/local mode saved at login/register (localStorage) before using backend default
+  const currentModeRef = useRef<string>(
+    (() => {
+      try {
+        const lsMode = localStorage.getItem("summaryMode");
+        if (lsMode) return lsMode;
+      } catch {}
+      return "patologi";
+    })()
+  );
+  const lastEmitRef = useRef<number>(0);
+  const MIN_SUMMARY_INTERVAL = 700; // ms
 
   // Public states
   const [transcript, setTranscript] = useState("");
@@ -282,12 +293,22 @@ export function useVoiceEngine() {
 
   // ====== Ambil mode ringkasan ======
   useEffect(() => {
-    fetch(`${BACKEND_ORIGIN}/get_summary_mode`)
-      .then((r) => r.json())
-      .then((j) => {
+    // Only query backend if there's no per-user local choice
+    (async () => {
+      try {
+        const hasLocal = (() => {
+          try { if (localStorage.getItem("summaryMode")) return true; } catch {}
+          return false;
+        })();
+        if (hasLocal) return;
+
+        const r = await fetch(`${BACKEND_ORIGIN}/get_summary_mode`);
+        const j = await r.json();
         if (j && j.mode) currentModeRef.current = j.mode;
-      })
-      .catch(() => {});
+      } catch (e) {
+        // ignore
+      }
+    })();
   }, []);
 
   // ====== SpeechRecognition setup ======
@@ -398,8 +419,20 @@ export function useVoiceEngine() {
   // ====== Summarize request & scheduling ======
   function requestSummarize(text: string, opts: { showUI?: boolean } = {}) {
     const { showUI = true } = opts;
-    if (summarizeInFlightRef.current) return;
     if (!text || text.trim() === "") return;
+
+    // Throttle rapid requests
+    const now = Date.now();
+    if (now - (lastEmitRef.current || 0) < MIN_SUMMARY_INTERVAL) return;
+    lastEmitRef.current = now;
+
+    // If a previous stream is running, stop it before starting a new one
+    if (summarizeInFlightRef.current) {
+      try {
+        socketRef.current?.emit("stop_stream");
+      } catch {}
+      summarizeInFlightRef.current = false;
+    }
 
     summarizeInFlightRef.current = true;
 

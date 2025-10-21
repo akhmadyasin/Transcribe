@@ -546,61 +546,7 @@ export default function SettingsPage() {
             </section>
           )}
 
-          {/* --- NEW: Summary Mode Settings --- */}
-          {matchesQuery("mode ringkasan patologi dokter hewan") && (
-            <section className={h.section}>
-              <h3>Pengaturan Mode Ringkasan</h3>
-              <form onSubmit={handleModeSubmit}>
-                <div className={h.item}>
-                  <div className={h.info}>
-                    <div className={h.label}>Mode Ringkasan</div>
-                    <div className={h.desc}>
-                      Pilih mode untuk ringkasan yang dihasilkan AI.
-                    </div>
-                  </div>
-                  <div className={h.control} style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '12px' }}>
-                    <label style={{ cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
-                      <input
-                        type="radio"
-                        name="summary_mode"
-                        value="patologi"
-                        checked={mode === 'patologi'}
-                        onChange={() => setMode('patologi')}
-                        style={{ marginRight: '8px' }}
-                      />
-                      Ringkasan Patologi
-                    </label>
-                    <label style={{ cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
-                      <input
-                        type="radio"
-                        name="summary_mode"
-                        value="dokter_hewan"
-                        checked={mode === 'dokter_hewan'}
-                        onChange={() => setMode('dokter_hewan')}
-                        style={{ marginRight: '8px' }}
-                      />
-                      Ringkasan Dokter Hewan
-                    </label>
-                  </div>
-                </div>
-                <div className={h.item}>
-                  <div className={h.info}>
-                    {/* Empty for alignment */}
-                    {modeStatus && (
-                      <div className={h.desc} style={{ fontStyle: 'italic', marginTop: '8px' }}>
-                        {modeStatus}
-                      </div>
-                    )}
-                  </div>
-                  <div className={h.control}>
-                     <button type="submit" className={h.btnSave} style={{padding: '8px 16px'}}>
-                        Simpan Mode
-                      </button>
-                  </div>
-                </div>
-              </form>
-            </section>
-          )}
+          {/* Summary mode moved to registration flow. */}
 
           {/* General Settings */}
           {matchesQuery("umum tema notifikasi simpan riwayat penyimpanan api key") && (

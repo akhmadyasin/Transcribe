@@ -1,3 +1,5 @@
+// #voicepanel.tsx
+
 "use client";
 
 import { useEffect, useRef, useState } from "react";
@@ -70,10 +72,27 @@ export default function VoicePanel() {
   const summaryEditorRef = useRef<HTMLDivElement>(null);
   const fullTranscriptRef = useRef<string>("");
   const lastFinalSummaryRef = useRef<string>("");
+  const lastTranscriptLengthRef = useRef<number>(0); // DIGUNAKAN UNTUK MENGECEK PERUBAHAN
   const clearHlTimerRef = useRef<any>(null);
   const autoSummarizeTimerRef = useRef<any>(null);
   const summarizeInFlightRef = useRef<boolean>(false);
-  const currentModeRef = useRef<string>("patologi");
+  // Prefer per-user/local mode saved at login/register (localStorage) before using backend default
+  const currentModeRef = useRef<string>(
+    (() => {
+      try {
+        const lsMode = localStorage.getItem("summaryMode");
+        if (lsMode) return lsMode;
+      } catch {}
+      return "patologi";
+    })()
+  );
+  const lastEmitRef = useRef<number>(0);
+  
+  // MODIFIKASI: Tingkatkan interval ke 3000ms (3 detik)
+  const MIN_SUMMARY_INTERVAL = 3000; 
+
+  // Batas minimum karakter baru untuk memicu ringkasan baru
+  const MIN_CHAR_DIFFERENCE = 20;
 
   const [transcript, setTranscript] = useState("");
   const [isListening, setIsListening] = useState(false);
@@ -86,20 +105,53 @@ export default function VoicePanel() {
   };
 
   const scheduleAutoSummarize = (text: string) => {
-    if (autoSummarizeTimerRef.current) clearTimeout(autoSummarizeTimerRef.current);
-    autoSummarizeTimerRef.current = setTimeout(() => {
+    // Emit incremental summarize requests as transcript updates, but throttle them
+    const now = Date.now();
+    const next = () => {
       const currentTranscript = text.trim();
-      if (currentTranscript.length > 50 && !summarizeInFlightRef.current) {
+      
+      // Hitung selisih panjang transkrip dari pemanggilan terakhir
+      const diff = currentTranscript.length - lastTranscriptLengthRef.current;
+      
+      // MODIFIKASI LOGIKA:
+      // Panggil requestSummarize hanya jika:
+      // 1. Transcript cukup panjang (> 10 char)
+      // 2. Ada koneksi socket
+      // 3. Transcript telah bertambah minimal MIN_CHAR_DIFFERENCE (20 karakter)
+      if (currentTranscript.length > 10 && socketRef.current?.connected && diff >= MIN_CHAR_DIFFERENCE) {
         requestSummarize(currentTranscript, false);
+        // Simpan panjang transkrip saat request berhasil dikirim
+        lastTranscriptLengthRef.current = currentTranscript.length; 
       }
-    }, 1000);
+      lastEmitRef.current = Date.now();
+    };
+
+    if (autoSummarizeTimerRef.current) clearTimeout(autoSummarizeTimerRef.current);
+    const elapsed = now - (lastEmitRef.current || 0);
+    if (elapsed >= MIN_SUMMARY_INTERVAL) {
+      next();
+    } else {
+      autoSummarizeTimerRef.current = setTimeout(next, MIN_SUMMARY_INTERVAL - elapsed);
+    }
   };
   
   useEffect(() => {
-    fetch(`${BACKEND_ORIGIN}/get_summary_mode`)
-      .then((r) => r.json())
-      .then((data) => { if (data.mode) currentModeRef.current = data.mode; })
-      .catch((err) => console.error("Gagal mengambil mode:", err));
+    // Only use backend mode if no local/user-selected mode exists
+    (async () => {
+      try {
+        const hasLocal = (() => {
+          try { if (localStorage.getItem("summaryMode")) return true; } catch {}
+          return false;
+        })();
+        if (hasLocal) return; // respect local choice
+
+        const r = await fetch(`${BACKEND_ORIGIN}/get_summary_mode`);
+        const data = await r.json();
+        if (data.mode) currentModeRef.current = data.mode;
+      } catch (err) {
+        console.error("Gagal mengambil mode:", err);
+      }
+    })();
 
     const socket = io(BACKEND_ORIGIN, { transports: ["websocket"] });
     socketRef.current = socket;
@@ -176,6 +228,7 @@ export default function VoicePanel() {
     if (recognitionRef.current) {
       fullTranscriptRef.current = "";
       lastFinalSummaryRef.current = "";
+      lastTranscriptLengthRef.current = 0; // RESET
       setTranscript("");
       if (summaryEditorRef.current) summaryEditorRef.current.innerHTML = "";
       
@@ -195,7 +248,15 @@ export default function VoicePanel() {
   };
 
   const requestSummarize = (text: string, showUI: boolean = true) => {
-    if (summarizeInFlightRef.current || !text || !socketRef.current?.connected) return;
+    if (!text || !socketRef.current?.connected) return;
+
+    // If a summary stream is already in flight, stop it so we can start a fresh one
+    if (summarizeInFlightRef.current) {
+      try {
+        socketRef.current.emit("stop_stream");
+      } catch {}
+      summarizeInFlightRef.current = false;
+    }
 
     summarizeInFlightRef.current = true;
     
@@ -216,31 +277,26 @@ export default function VoicePanel() {
 
           <div
             className="editor"
-            style={{ minHeight: 120, flexGrow: 1, marginBottom: 0, overflow: 'hidden' }}
+            style={{ minHeight: 120, flexGrow: 1, marginBottom: 0, overflow: 'auto', maxHeight: '60vh' }}
           >
-            <textarea
-              value={transcript}
-              placeholder="Transkrip suara akan muncul di sini..."
-              readOnly
+            <div
               id="transcript"
+              role="region"
+              aria-label="Transkrip"
               style={{
                 width: '100%',
-                height: '100%',
                 border: 'none',
                 background: 'transparent',
-                resize: 'none',
                 fontSize: '16px',
                 fontFamily: 'inherit',
-                outline: 'none',
                 boxSizing: 'border-box',
                 padding: 0,
-                overflow: 'hidden',
-                scrollbarWidth: 'none', // Firefox
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-word',
               }}
-            />
-            <style>{`
-              #transcript::-webkit-scrollbar { display: none; }
-            `}</style>
+            >
+              {transcript}
+            </div>
           </div>
           <div className="btn-group">
             {!isListening ? (
@@ -328,7 +384,7 @@ export default function VoicePanel() {
             className="editor"
             contentEditable
             data-placeholder="Ringkasan akan muncul di sini..."
-            style={{ minHeight: 120, flexGrow: 1, marginBottom: 0, overflow: 'hidden' }}
+            style={{ minHeight: 120, flexGrow: 1, marginBottom: 0, overflow: 'auto', maxHeight: '60vh', padding: 8 }}
           />
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 12 }}>
             <button
