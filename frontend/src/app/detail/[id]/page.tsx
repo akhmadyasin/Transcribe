@@ -21,6 +21,74 @@ type HistoryItem = {
   summary: string;
 };
 
+// Simple formatter to render the structured summary returned by the realtime summarizer.
+// Supports **bold** markers, list items starting with '- ', and preserves line breaks.
+function renderSummaryHtml(src: string | undefined | null) {
+  if (!src) return "";
+  // escape HTML
+  const escapeHtml = (s: string) =>
+    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
+
+  const raw = escapeHtml(src);
+  const lines = raw.split(/\r?\n/);
+  let out: string[] = [];
+  let inList = false;
+
+  // Helper to close list if open
+  const closeListIfOpen = () => {
+    if (inList) {
+      out.push('</ul>');
+      inList = false;
+    }
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    const rawLine = lines[i];
+    const line = rawLine.trim();
+
+    if (line === '') {
+      // blank line -> close lists and add separator
+      closeListIfOpen();
+      out.push('<p></p>');
+      continue;
+    }
+
+    // list item
+    if (line.startsWith('- ')) {
+      if (!inList) {
+        out.push('<ul>');
+        inList = true;
+      }
+      const item = line.substring(2).trim();
+      const itemHtml = item.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+      out.push(`<li>${itemHtml}</li>`);
+      continue;
+    }
+
+    // bold-only header line like **Heading** or **Heading:**
+    const mHeader = line.match(/^\*\*(.+?)\*\*:?$/);
+    if (mHeader) {
+      // close any open list first
+      closeListIfOpen();
+      const headingText = mHeader[1].trim();
+      out.push(`<h2>${headingText}</h2>`);
+      continue;
+    }
+
+    // fallback: inline bold formatting
+    const inline = line.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+    // If this line looks like a subheading (ends with ':'), render as bold paragraph
+    if (/^.+:$/.test(line)) {
+      out.push(`<div><strong>${inline.replace(/:$/, '')}</strong></div>`);
+    } else {
+      out.push(`<div>${inline}</div>`);
+    }
+  }
+
+  closeListIfOpen();
+  return out.join('\n');
+}
+
 // Sample data - in real app this would come from API/database
 const SAMPLE_DATA: { [key: string]: HistoryItem } = {
   "1": {
@@ -53,6 +121,9 @@ export default function DetailPage() {
 
   // detail data
   const [detailData, setDetailData] = useState<HistoryItem | null>(null);
+  const [notFound, setNotFound] = useState(false);
+  const [errorText, setErrorText] = useState<string | null>(null);
+  const [fetching, setFetching] = useState(false);
 
   useEffect(() => {
     let mounted = true;
@@ -80,14 +151,62 @@ export default function DetailPage() {
   }, [router, supabase]);
 
   // Load detail data
-  useEffect(() => {
-    if (id && SAMPLE_DATA[id]) {
-      setDetailData(SAMPLE_DATA[id]);
-    } else {
-      // If data not found, redirect to history
-      router.replace("/history");
+  // fetch function that can be retried
+  const fetchDetail = async () => {
+    if (!id) {
+      router.replace('/history');
+      return;
     }
-  }, [id, router]);
+
+    setFetching(true);
+    setErrorText(null);
+    setNotFound(false);
+    setDetailData(null);
+
+    try {
+      const { data, error } = await supabase
+        .from('histories')
+        .select('id, created_at, original_text, summary_result, metadata')
+        .eq('id', id)
+        .single();
+
+      if (error) {
+        console.error('Error fetching summary:', error);
+        setErrorText(error.message || JSON.stringify(error));
+        setNotFound(true);
+        return;
+      }
+
+      if (!data) {
+        setErrorText('No data returned');
+        setNotFound(true);
+        return;
+      }
+
+      const mapped: HistoryItem = {
+        id: data.id,
+        date: data.created_at ? new Date(data.created_at).toLocaleString() : '',
+        duration: (data.metadata && data.metadata.duration) || '',
+        transcript: data.original_text,
+        summary: data.summary_result,
+      };
+
+      setDetailData(mapped);
+      setNotFound(false);
+    } catch (err: any) {
+      console.error('Unexpected error loading detail:', err);
+      setErrorText(err?.message ? String(err.message) : String(err));
+      setNotFound(true);
+    } finally {
+      setFetching(false);
+    }
+  };
+
+  useEffect(() => {
+    // wait for auth/session to be ready
+    if (!loading) fetchDetail();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, loading]);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -122,11 +241,54 @@ export default function DetailPage() {
     alert("Text copied to clipboard!");
   };
 
-  const handleDelete = () => {
-    if (confirm("Are you sure you want to delete this transcription?")) {
-      // In real app, this would delete from database
-      router.push("/history");
+  const handleShare = () => {
+    if (!id) return;
+    const link = `${location.origin}/detail/${id}`;
+    try {
+      navigator.clipboard.writeText(link);
+      alert("Share link copied to clipboard!");
+    } catch (e) {
+      // fallback: show prompt so user can copy manually
+      try { window.prompt("Copy this link:", link); } catch { alert(link); }
     }
+  };
+
+  const handleDelete = () => {
+    if (!confirm("Are you sure you want to delete this transcription?")) return;
+
+    (async () => {
+      try {
+        const userRes = await supabase.auth.getUser();
+        const userId = userRes?.data?.user?.id;
+        if (!userId) {
+          alert('Anda belum login.');
+          return;
+        }
+        const { data: deleted, error } = await supabase
+          .from('histories')
+          .delete()
+          .eq('id', id)
+          .eq('user_id', userId)
+          .select('id');
+
+        if (error) {
+          alert('Gagal menghapus: ' + error.message);
+          console.error('Delete error:', error);
+          return;
+        }
+
+        if (!deleted || (Array.isArray(deleted) && deleted.length === 0)) {
+          alert('Gagal menghapus: baris tidak ditemukan atau akses ditolak (RLS).');
+          return;
+        }
+
+        // success -> navigate back to history
+        router.push('/history');
+      } catch (err) {
+        console.error('Unexpected delete error', err);
+        alert('Gagal menghapus item.');
+      }
+    })();
   };
 
   const handleExport = () => {
@@ -158,10 +320,35 @@ export default function DetailPage() {
   }
 
   if (!detailData) {
+    if (notFound) {
+      return (
+        <div className={s.app}>
+          <main className={s.content}>
+            <div className={s.card}>
+              <h3>Transcription not found</h3>
+              <p>The requested transcription could not be found. It may have been deleted or the ID is invalid.</p>
+              <p style={{ fontSize: 12, color: '#666' }}>Requested id: <strong>{id}</strong></p>
+              {errorText && (
+                <div style={{ marginTop: 8, color: '#b00' }}>
+                  <strong>Error:</strong> {errorText}
+                </div>
+              )}
+              <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
+                <button className={d.actionButton} onClick={() => router.push('/history')}>Back to History</button>
+                <button className={d.actionButton} onClick={() => fetchDetail()} disabled={fetching}>
+                  {fetching ? 'Retrying...' : 'Retry'}
+                </button>
+              </div>
+            </div>
+          </main>
+        </div>
+      );
+    }
+
     return (
       <div className={s.app}>
         <main className={s.content}>
-          <div className={s.card}>Transcription not found</div>
+          <div className={s.card}>Loading transcription...</div>
         </main>
       </div>
     );
@@ -286,7 +473,7 @@ export default function DetailPage() {
                 </svg>
                 Export
               </button>
-              <button className={d.actionButton} onClick={() => alert('Share functionality coming soon!')}>
+              <button className={d.actionButton} onClick={handleShare}>
                 <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <circle cx="18" cy="5" r="3"></circle>
                   <circle cx="6" cy="12" r="3"></circle>
@@ -322,7 +509,7 @@ export default function DetailPage() {
                 </button>
               </div>
               <div className={d.transcriptContent}>
-                {detailData.transcript}
+                <div style={{ whiteSpace: 'pre-wrap' }}>{detailData.transcript}</div>
               </div>
             </section>
 
@@ -348,7 +535,7 @@ export default function DetailPage() {
                 </button>
               </div>
               <div className={d.summaryContent}>
-                {detailData.summary}
+                <div dangerouslySetInnerHTML={{ __html: renderSummaryHtml(detailData.summary) }} />
               </div>
             </section>
           </div>

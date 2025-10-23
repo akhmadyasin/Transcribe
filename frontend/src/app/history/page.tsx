@@ -49,12 +49,19 @@ export default function HistoryPage() {
       }
       setEmail(session.user.email || "");
       setMeta((session.user.user_metadata as UserMeta) || {});
-      // fetch user summaries from Supabase
+      // fetch user summaries from Supabase (only for authenticated user)
       try {
-        const { data, error } = await supabase
+        const userRes = await supabase.auth.getUser();
+        const userId = userRes?.data?.user?.id;
+
+        let query = supabase
           .from('histories')
           .select('id, created_at, original_text, summary_result, mode_used, metadata')
           .order('created_at', { ascending: false });
+
+        if (userId) query = query.eq('user_id', userId) as any;
+
+        const { data, error } = await query;
 
         if (error) {
           console.error('Error fetching summaries:', error);
@@ -132,9 +139,26 @@ export default function HistoryPage() {
     setItems((p) => p.filter((x) => x.id !== id));
 
     (async () => {
-      const { error } = await supabase.from('').delete().eq('id', id);
-      if (error) {
-        alert('Gagal menghapus riwayat: ' + error.message);
+      try {
+        const userRes = await supabase.auth.getUser();
+        const userId = userRes?.data?.user?.id;
+        if (!userId) {
+          throw new Error('User tidak terautentikasi');
+        }
+        const { data: deleted, error } = await supabase
+          .from('histories')
+          .delete()
+          .eq('id', id)
+          .eq('user_id', userId)
+          .select('id');
+
+        if (error) throw error;
+        // If no rows were returned, nothing was deleted (maybe RLS or mismatch)
+        if (!deleted || (Array.isArray(deleted) && deleted.length === 0)) {
+          throw new Error('Tidak dapat menghapus baris di database (akses ditolak atau baris tidak ditemukan)');
+        }
+      } catch (err: any) {
+        alert('Gagal menghapus riwayat: ' + (err?.message || String(err)));
         setItems(prev); // rollback
       }
     })();

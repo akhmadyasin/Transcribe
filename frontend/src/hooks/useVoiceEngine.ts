@@ -607,7 +607,7 @@ export function useVoiceEngine() {
         },
       } as any;
 
-      const { error } = await supabase.from("summaries").insert([payload]);
+      const { error } = await supabase.from("histories").insert([payload]);
       if (error) {
         console.warn("Supabase insert error:", error);
         showToast("Gagal menyimpan ringkasan ke database.", "error");
