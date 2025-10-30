@@ -1,12 +1,19 @@
-
+// Contoh isi file supabaseClient.ts
 import { createClient } from "@supabase/supabase-js";
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+// Klien untuk Server Side Rendering (SSR) atau browser
+export const supabaseBrowser = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+);
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+// Jika Anda juga mengimpor 'supabase' (tanpa 'Browser'), 
+// pastikan Anda mengekspornya:
+export const supabase = supabaseBrowser; 
 
-// Tambahkan ini:
-export function supabaseBrowser() {
-  return supabase;
-}
+// Atau jika hanya satu yang diekspor, ubah semua file yang mengimpor:
+// export const supabase = createClient(...)
+// Lalu ganti semua import dari:
+// import { supabaseBrowser } from "..."; 
+// menjadi: 
+// import { supabase } from "...";
