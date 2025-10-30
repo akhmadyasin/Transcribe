@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Image from "next/image";
 import { useRouter, useParams } from "next/navigation";
 import { supabaseBrowser } from "@/app/lib/supabaseClient";
+import SharePopup from "@/app/components/SharePopup";
 import s from "@/app/styles/dashboard.module.css";
 import d from "@/app/styles/detail.module.css";
 
@@ -125,6 +126,9 @@ export default function DetailPage() {
   const [errorText, setErrorText] = useState<string | null>(null);
   const [fetching, setFetching] = useState(false);
 
+  // share popup
+  const [showSharePopup, setShowSharePopup] = useState(false);
+
   useEffect(() => {
     let mounted = true;
     (async () => {
@@ -239,18 +243,6 @@ export default function DetailPage() {
   const handleCopy = (text: string) => {
     navigator.clipboard.writeText(text);
     alert("Text copied to clipboard!");
-  };
-
-  const handleShare = () => {
-    if (!id) return;
-    const link = `${location.origin}/detail/${id}`;
-    try {
-      navigator.clipboard.writeText(link);
-      alert("Share link copied to clipboard!");
-    } catch (e) {
-      // fallback: show prompt so user can copy manually
-      try { window.prompt("Copy this link:", link); } catch { alert(link); }
-    }
   };
 
   const handleDelete = () => {
@@ -473,7 +465,7 @@ export default function DetailPage() {
                 </svg>
                 Export
               </button>
-              <button className={d.actionButton} onClick={handleShare}>
+              <button className={d.actionButton} onClick={() => setShowSharePopup(true)}>
                 <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <circle cx="18" cy="5" r="3"></circle>
                   <circle cx="6" cy="12" r="3"></circle>
@@ -554,6 +546,13 @@ export default function DetailPage() {
           </div>
         </div>
       </main>
+
+      {/* Share Popup */}
+      <SharePopup
+        isOpen={showSharePopup}
+        onClose={() => setShowSharePopup(false)}
+        historyId={id}
+      />
     </div>
   );
 }

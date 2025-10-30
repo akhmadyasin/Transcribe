@@ -7,4 +7,6 @@ pyjwt
 requests
 eventlet==0.35.2
 greenlet>=3.0
+supabase
+requests
 
